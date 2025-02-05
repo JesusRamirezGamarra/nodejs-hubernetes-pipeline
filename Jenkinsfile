@@ -9,6 +9,25 @@ pipeline {
     }
 
     stages {
+        stage('Checkout') {
+            agent any
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "${env.BRANCH_NAME}"]],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/JesusRamirezGamarra/nodejs-hubernetes-pipeline.git',
+                        credentialsId: 'dockerhub-credentials'
+                    ]],
+                    extensions: [
+                        [$class: 'CloneOption', depth: 1, noTags: true] // 🔥 Optimización aquí
+                    ]
+                ])
+            }
+        }
+    }
+
+    stages {
         stage('Preparar entorno') {
             agent {
                 docker {
