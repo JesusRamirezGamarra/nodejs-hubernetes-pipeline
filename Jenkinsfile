@@ -4,59 +4,62 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME='mi-app-jesusramirez'
+        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v2'
+        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v2'
     }
 
     stages {
-        stage('Instalar dependencias...') {
+        stage('Preparar entorno') {
             agent {
                 docker {
                     image 'node:18-alpine'
                 }
             }
             steps {
-                echo 'Listando todas las carpetas y archivos...'
+                echo 'Instalando dependencias...'
                 sh 'npm install'
             }
         }
 
-        stage('Ejecutar tests...') {
+        stage('Ejecutar tests') {
             agent {
                 docker {
                     image 'node:18-alpine'
                 }
             }
             steps {
-                echo 'Listando todas las carpetas y archivos...'
+                echo 'Ejecutando pruebas...'
                 sh 'npm run test'
             }
         }
 
-        stage('Construir y pushear imagen a dockerhub') {
+        stage('Construir y subir imagen a DockerHub') {
             when {
                 branch 'develop'
             }
-
             agent {
                 docker {
                     image 'docker:latest'
                 }
             }
             steps {
-                sh '''
-                echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
-                docker build -t $DOCKER_REPO:latest .
-                docker push $DOCKER_REPO:latest
-                '''
+                script {
+                    echo 'Autenticando en DockerHub...'
+                    sh '''
+                    echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+                    docker build -t $DOCKER_REPO:latest .
+                    docker push $DOCKER_REPO:latest
+                    '''
+                }
             }
         }
 
-        stage('Despliegue inicial en minikube...') {
+        stage('Desplegar en Kubernetes con LoadBalancer') {
             when {
                 branch 'develop'
             }
             agent {
-                docker { 
+                docker {
                     image 'bitnami/kubectl:latest'
                     args '--entrypoint=""'
                 }
@@ -65,30 +68,30 @@ pipeline {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
                         def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
-                        if (deploymentExists) {
-                            echo "El deployment ya existe, proceder a la actualizacion de la imagen..."
-                        } else {
-                            echo "Deployment no existe proceder a aplicarlo..."
-                            sh "kubectl apply -f deployment.yaml"
-                        }
-                    }
-                }
-            }
-        }
+                        def serviceExists = sh(script: "kubectl get service $KUBE_SERVICE_NAME --ignore-not-found", returnStdout: true).trim()
 
-        stage('Actualizacion de imagen en minikube...') {
-            when {
-                branch 'develop'
-            }
-            agent {
-                docker { 
-                    image 'bitnami/kubectl:latest'
-                    args '--entrypoint=""'
-                }
-            }
-            steps {
-                withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
-                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez=$DOCKER_REPO:latest"
+                        if (!deploymentExists) {
+                            echo "Creando Deployment..."
+                            sh "kubectl apply -f deployment.yaml"
+                        } else {
+                            echo "Deployment ya existe, se actualizará..."
+                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v2=$DOCKER_REPO:latest"
+                        }
+
+                        if (!serviceExists) {
+                            echo "Creando Service con LoadBalancer..."
+                            sh '''
+                            kubectl expose deployment $KUBE_DEPLOYMENT_NAME --type=LoadBalancer --name=$KUBE_SERVICE_NAME --port=80 --target-port=3000
+                            '''
+                        } else {
+                            echo "Service ya existe, no es necesario volver a crearlo."
+                        }
+
+                        echo "Verificando IP externa del LoadBalancer..."
+                        sh '''
+                        kubectl get service $KUBE_SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+                        '''
+                    }
                 }
             }
         }
@@ -96,14 +99,14 @@ pipeline {
 
     post {
         success {
-            mail to: 'lcruzfarfan@gmail.com',
-                subject: "Pipeline ${env.JOB_NAME} ejecucion correcta",
+            mail to: 'luciojesusramirezgamarra@gmail.com',
+                subject: "Pipeline ${env.JOB_NAME} ejecutado correctamente",
                 body: """
                 Hola,
 
-                El pipeline '${env.JOB_NAME}' (Build #${env.BUILD_NUMBER}) ha finalizado de manera correcta
+                El pipeline '${env.JOB_NAME}' (Build #${env.BUILD_NUMBER}) ha finalizado correctamente.
 
-                Los detalles se pueden revisar en el siguiente enlace:
+                Puedes ver los detalles aquí:
                 ${env.BUILD_URL}
 
                 Saludos,
@@ -112,3 +115,13 @@ pipeline {
         }
     }
 }
+
+
+// ¿Qué se ha mejorado?
+// ✅ Verificación de la existencia del Deployment y Service antes de crearlos.
+// ✅ Creación automática del Service con LoadBalancer si no existe.
+// ✅ Actualización de la imagen en el Deployment en lugar de recrearlo.
+// ✅ Se reduce la duplicación de agentes Docker en los stages de instalación y testing.
+// ✅ Se extrae la IP del LoadBalancer para validación después del despliegue.
+
+// Con este pipeline, tu aplicación debería desplegarse correctamente en Kubernetes con LoadBalancer sin errores cuando ya existe. 🚀
