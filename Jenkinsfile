@@ -25,9 +25,7 @@ pipeline {
                 ])
             }
         }
-    }
-
-    stages {
+        
         stage('Preparar entorno') {
             agent {
                 docker {
