@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mi-app-jesusramirez-v3
+  name: mi-app-jesusramirez-v2
   labels:
-    app: mi-app-jesusramirez-v3
+    app: mi-app-jesusramirez-v2
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mi-app-jesusramirez-v3
+      app: mi-app-jesusramirez-v2
   template:
     metadata:
       labels:
-        app: mi-app-jesusramirez-v3
+        app: mi-app-jesusramirez-v2
     spec:
       containers:
-        - name: mi-app-jesusramirez-v3
+        - name: mi-app-jesusramirez-v2
           image: jesusramirezgamarra/jenkins-node:latest
           ports:
             - containerPort: 3000
@@ -23,10 +23,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mi-app-service-jesusramirez-v3
+  name: mi-app-service-jesusramirez-v2
 spec:
   selector:
-    app: mi-app-jesusramirez-v3
+    app: mi-app-jesusramirez-v2
   ports:
     - protocol: TCP
       port: 80

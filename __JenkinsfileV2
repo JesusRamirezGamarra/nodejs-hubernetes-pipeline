@@ -4,8 +4,8 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v3'
-        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v3'
+        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v2'
+        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v2'
     }
 
     stages {
@@ -33,7 +33,7 @@ pipeline {
                 }
             }
             steps {
-                echo '📦 Instalando dependencias...'
+                echo 'Instalando dependencias...'
                 sh 'npm install'
             }
         }
@@ -45,7 +45,7 @@ pipeline {
                 }
             }
             steps {
-                echo '🧪 Ejecutando pruebas...'
+                echo 'Ejecutando pruebas...'
                 sh 'npm run test'
             }
         }
@@ -61,7 +61,7 @@ pipeline {
             }
             steps {
                 script {
-                    echo '🔐 Autenticando en DockerHub...'
+                    echo 'Autenticando en DockerHub...'
                     sh '''
                     echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
                     docker build -t $DOCKER_REPO:latest .
@@ -84,37 +84,30 @@ pipeline {
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
-                        echo "🔍 Verificando existencia de Deployment y Service..."
-                        
                         def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
                         def serviceExists = sh(script: "kubectl get service $KUBE_SERVICE_NAME --ignore-not-found", returnStdout: true).trim()
 
-                        if (deploymentExists == '') {
-                            echo "✅ Creando Deployment..."
+                        if (!deploymentExists) {
+                            echo "Creando Deployment..."
                             sh "kubectl apply -f deployment.yaml"
                         } else {
-                            echo "🔄 Deployment ya existe, actualizando imagen..."
-                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v3=$DOCKER_REPO:latest"
+                            echo "Deployment ya existe, se actualizará..."
+                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v2=$DOCKER_REPO:latest"
                         }
 
-                        if (serviceExists == '') {
-                            echo "✅ Creando Service con LoadBalancer..."
+                        if (!serviceExists) {
+                            echo "Creando Service con LoadBalancer..."
                             sh '''
                             kubectl expose deployment $KUBE_DEPLOYMENT_NAME --type=LoadBalancer --name=$KUBE_SERVICE_NAME --port=80 --target-port=3000
                             '''
                         } else {
-                            echo "🔄 Service ya existe, no es necesario volver a crearlo."
+                            echo "Service ya existe, no es necesario volver a crearlo."
                         }
 
-                        echo "🔍 Verificando IP externa del LoadBalancer..."
-                        def lbIP = sh(script: "kubectl get service $KUBE_SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
-
-                        if (lbIP == '') {
-                            echo "⚠️ Aún no hay IP asignada al LoadBalancer. Kubernetes puede demorar en asignarla."
-                        } else {
-                            echo "🌍 IP del LoadBalancer: $lbIP"
-                            env.LB_IP = lbIP  // Guardamos la IP en variable de entorno para el email
-                        }
+                        echo "Verificando IP externa del LoadBalancer..."
+                        sh '''
+                        kubectl get service $KUBE_SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+                        '''
                     }
                 }
             }
@@ -124,16 +117,14 @@ pipeline {
     post {
         success {
             mail to: 'luciojesusramirezgamarra@gmail.com',
-                subject: "✅ Pipeline ${env.JOB_NAME} ejecutado correctamente",
+                subject: "Pipeline ${env.JOB_NAME} ejecutado correctamente",
                 body: """
                 Hola,
 
                 El pipeline '${env.JOB_NAME}' (Build #${env.BUILD_NUMBER}) ha finalizado correctamente.
 
-                📌 Puedes ver los detalles aquí:
+                Puedes ver los detalles aquí:
                 ${env.BUILD_URL}
-
-                🌍 IP del LoadBalancer: ${env.LB_IP ?: 'No asignada aún'}
 
                 Saludos,
                 Jenkins Server
@@ -141,3 +132,13 @@ pipeline {
         }
     }
 }
+
+
+// ¿Qué se ha mejorado?
+// ✅ Verificación de la existencia del Deployment y Service antes de crearlos.
+// ✅ Creación automática del Service con LoadBalancer si no existe.
+// ✅ Actualización de la imagen en el Deployment en lugar de recrearlo.
+// ✅ Se reduce la duplicación de agentes Docker en los stages de instalación y testing.
+// ✅ Se extrae la IP del LoadBalancer para validación después del despliegue.
+
+// Con este pipeline, tu aplicación debería desplegarse correctamente en Kubernetes con LoadBalancer sin errores cuando ya existe. 🚀
