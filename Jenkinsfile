@@ -4,8 +4,8 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v3'
-        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v3'
+        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v4'
+        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v4'
     }
 
     stages {
@@ -94,7 +94,7 @@ pipeline {
                             sh "kubectl apply -f deployment.yaml"
                         } else {
                             echo "🔄 Deployment ya existe, actualizando imagen..."
-                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v3=$DOCKER_REPO:latest"
+                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v4=$DOCKER_REPO:latest"
                         }
 
                         if (serviceExists == '') {
