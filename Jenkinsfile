@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME='mi-app-JesusRamirez'
+        KUBE_DEPLOYMENT_NAME='mi-app-jesusramirez'
     }
 
     stages {
@@ -88,7 +88,7 @@ pipeline {
             }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
-                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-JesusRamirez=$DOCKER_REPO:latest"
+                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez=$DOCKER_REPO:latest"
                 }
             }
         }
