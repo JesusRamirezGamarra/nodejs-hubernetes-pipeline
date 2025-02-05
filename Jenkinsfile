@@ -4,10 +4,10 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME='mi-app'
+        KUBE_DEPLOYMENT_NAME='mi-app-JesusRamirez'
     }
 
-        stages {
+    stages {
         stage('Instalar dependencias...') {
             agent {
                 docker {
@@ -55,7 +55,12 @@ pipeline {
             when {
                 branch 'develop'
             }
-            agent any
+            agent {
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
+            }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
@@ -75,10 +80,15 @@ pipeline {
             when {
                 branch 'develop'
             }
-            agent any
+            agent {
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
+            }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
-                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app=$DOCKER_REPO:latest"
+                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-JesusRamirez=$DOCKER_REPO:latest"
                 }
             }
         }
