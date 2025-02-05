@@ -1,16 +1,29 @@
 pipeline {
-    agent none
-
+    agent any
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
-        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v4'
-        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v4'
+        DOCKER_REPO = 'jesusramirezgamarra/frontend-react-k8'
+        KUBE_DEPLOYMENT_NAME='mi-web-front-jesusramirez'
+        DEPLOYMENT_FILE_NAME='deployment-frontend.yaml'
+        SERVICE_NAME='mi-web-service'  // 🔹 Reemplaza con el nombre real de tu servicio LoadBalancer
+    }
+
+    options {
+        skipStagesAfterUnstable()
     }
 
     stages {
+        stage('Verificar rama') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME != 'develop') {
+                        error("Este pipeline solo se ejecuta en la rama 'develop'. Rama actual: ${env.BRANCH_NAME}")
+                    }
+                }
+            }
+        }
+
         stage('Checkout') {
-            agent any
             steps {
                 checkout([
                     $class: 'GitSCM',
@@ -20,63 +33,50 @@ pipeline {
                         credentialsId: 'dockerhub-credentials'
                     ]],
                     extensions: [
-                        [$class: 'CloneOption', depth: 1, noTags: true] // 🔥 Optimización aquí
+                        [$class: 'CloneOption', depth: 1, noTags: true]
                     ]
                 ])
             }
         }
-        
-        stage('Preparar entorno') {
+
+        stage ('Instalar dependencias...') {
             agent {
-                docker {
-                    image 'node:18-alpine'
-                }
+                docker { image 'node:18-alpine' }
             }
             steps {
-                echo '📦 Instalando dependencias...'
+                echo "Remover dependencias antiguas o referencias por el json.lock"
+                sh 'rm -rf node_modules package-lock.json'
                 sh 'npm install'
             }
         }
 
-        stage('Ejecutar tests') {
+        stage ('Construir proyecto con archivos estáticos...') {
             agent {
-                docker {
-                    image 'node:18-alpine'
-                }
+                docker { image 'node:18-alpine' }
             }
             steps {
-                echo '🧪 Ejecutando pruebas...'
-                sh 'npm run test'
+                sh 'npm run build'
             }
         }
 
-        stage('Construir y subir imagen a DockerHub') {
-            when {
-                branch 'develop'
-            }
+        stage('Construir y pushear imagen a DockerHub') {
             agent {
                 docker {
                     image 'docker:latest'
                 }
             }
             steps {
-                script {
-                    echo '🔐 Autenticando en DockerHub...'
-                    sh '''
-                    echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
-                    docker build -t $DOCKER_REPO:latest .
-                    docker push $DOCKER_REPO:latest
-                    '''
-                }
+                sh '''
+                echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+                docker build -t $DOCKER_REPO:latest .
+                docker push $DOCKER_REPO:latest
+                '''
             }
         }
 
-        stage('Desplegar en Kubernetes con LoadBalancer') {
-            when {
-                branch 'develop'
-            }
+        stage('Despliegue inicial en Minikube...') {
             agent {
-                docker {
+                docker { 
                     image 'bitnami/kubectl:latest'
                     args '--entrypoint=""'
                 }
@@ -84,37 +84,48 @@ pipeline {
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
-                        echo "🔍 Verificando existencia de Deployment y Service..."
-                        
                         def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
-                        def serviceExists = sh(script: "kubectl get service $KUBE_SERVICE_NAME --ignore-not-found", returnStdout: true).trim()
-
-                        if (deploymentExists == '') {
-                            echo "✅ Creando Deployment..."
-                            sh "kubectl apply -f deployment.yaml"
+                        if (deploymentExists) {
+                            echo "El deployment ya existe, proceder a la actualización de la imagen..."
                         } else {
-                            echo "🔄 Deployment ya existe, actualizando imagen..."
-                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v4=$DOCKER_REPO:latest"
+                            echo "Deployment no existe, proceder a aplicarlo..."
+                            sh "kubectl apply -f $DEPLOYMENT_FILE_NAME"
                         }
+                    }
+                }
+            }
+        }
 
-                        if (serviceExists == '') {
-                            echo "✅ Creando Service con LoadBalancer..."
-                            sh '''
-                            kubectl expose deployment $KUBE_DEPLOYMENT_NAME --type=LoadBalancer --name=$KUBE_SERVICE_NAME --port=80 --target-port=3000
-                            '''
-                        } else {
-                            echo "🔄 Service ya existe, no es necesario volver a crearlo."
+        stage('Actualización de imagen en Minikube...') {
+            agent {
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
+            }
+            steps {
+                withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
+                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-web-front-jesusramirez=$DOCKER_REPO:latest"
+                }
+            }
+        }
+
+        stage('Obtener IP del LoadBalancer') {
+            agent {
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
+            }
+            steps {
+                withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
+                    script {
+                        def lbIp = sh(script: "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
+                        if (!lbIp) {
+                            lbIp = "No asignada aún"
                         }
-
-                        echo "🔍 Verificando IP externa del LoadBalancer..."
-                        def lbIP = sh(script: "kubectl get service $KUBE_SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
-
-                        if (lbIP == '') {
-                            echo "⚠️ Aún no hay IP asignada al LoadBalancer. Kubernetes puede demorar en asignarla."
-                        } else {
-                            echo "🌍 IP del LoadBalancer: $lbIP"
-                            env.LB_IP = lbIP  // Guardamos la IP en variable de entorno para el email
-                        }
+                        env.LB_IP = lbIp
+                        echo "IP del LoadBalancer: ${env.LB_IP}"
                     }
                 }
             }
@@ -133,7 +144,7 @@ pipeline {
                 📌 Puedes ver los detalles aquí:
                 ${env.BUILD_URL}
 
-                🌍 IP del LoadBalancer: ${env.LB_IP ?: 'No asignada aún'}
+                🌍 IP del LoadBalancer: ${env.LB_IP}
 
                 Saludos,
                 Jenkins Server

@@ -1,0 +1,143 @@
+pipeline {
+    agent none
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        DOCKER_REPO = 'jesusramirezgamarra/jenkins-node'
+        KUBE_DEPLOYMENT_NAME = 'mi-app-jesusramirez-v4'
+        KUBE_SERVICE_NAME = 'mi-app-service-jesusramirez-v4'
+    }
+
+    stages {
+        stage('Checkout') {
+            agent any
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "${env.BRANCH_NAME}"]],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/JesusRamirezGamarra/frontend-k8-pipeline.git',
+                        credentialsId: 'dockerhub-credentials'
+                    ]],
+                    extensions: [
+                        [$class: 'CloneOption', depth: 1, noTags: true] // 🔥 Optimización aquí
+                    ]
+                ])
+            }
+        }
+        
+        stage('Preparar entorno') {
+            agent {
+                docker {
+                    image 'node:18-alpine'
+                }
+            }
+            steps {
+                echo '📦 Instalando dependencias...'
+                sh 'npm install'
+            }
+        }
+
+        stage('Ejecutar tests') {
+            agent {
+                docker {
+                    image 'node:18-alpine'
+                }
+            }
+            steps {
+                echo '🧪 Ejecutando pruebas...'
+                sh 'npm run test'
+            }
+        }
+
+        stage('Construir y subir imagen a DockerHub') {
+            when {
+                branch 'develop'
+            }
+            agent {
+                docker {
+                    image 'docker:latest'
+                }
+            }
+            steps {
+                script {
+                    echo '🔐 Autenticando en DockerHub...'
+                    sh '''
+                    echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+                    docker build -t $DOCKER_REPO:latest .
+                    docker push $DOCKER_REPO:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Desplegar en Kubernetes con LoadBalancer') {
+            when {
+                branch 'develop'
+            }
+            agent {
+                docker {
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
+            }
+            steps {
+                withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
+                    script {
+                        echo "🔍 Verificando existencia de Deployment y Service..."
+                        
+                        def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
+                        def serviceExists = sh(script: "kubectl get service $KUBE_SERVICE_NAME --ignore-not-found", returnStdout: true).trim()
+
+                        if (deploymentExists == '') {
+                            echo "✅ Creando Deployment..."
+                            sh "kubectl apply -f deployment.yaml"
+                        } else {
+                            echo "🔄 Deployment ya existe, actualizando imagen..."
+                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-app-jesusramirez-v4=$DOCKER_REPO:latest"
+                        }
+
+                        if (serviceExists == '') {
+                            echo "✅ Creando Service con LoadBalancer..."
+                            sh '''
+                            kubectl expose deployment $KUBE_DEPLOYMENT_NAME --type=LoadBalancer --name=$KUBE_SERVICE_NAME --port=80 --target-port=3000
+                            '''
+                        } else {
+                            echo "🔄 Service ya existe, no es necesario volver a crearlo."
+                        }
+
+                        echo "🔍 Verificando IP externa del LoadBalancer..."
+                        def lbIP = sh(script: "kubectl get service $KUBE_SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
+
+                        if (lbIP == '') {
+                            echo "⚠️ Aún no hay IP asignada al LoadBalancer. Kubernetes puede demorar en asignarla."
+                        } else {
+                            echo "🌍 IP del LoadBalancer: $lbIP"
+                            env.LB_IP = lbIP  // Guardamos la IP en variable de entorno para el email
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            mail to: 'luciojesusramirezgamarra@gmail.com',
+                subject: "✅ Pipeline ${env.JOB_NAME} ejecutado correctamente",
+                body: """
+                Hola,
+
+                El pipeline '${env.JOB_NAME}' (Build #${env.BUILD_NUMBER}) ha finalizado correctamente.
+
+                📌 Puedes ver los detalles aquí:
+                ${env.BUILD_URL}
+
+                🌍 IP del LoadBalancer: ${env.LB_IP ?: 'No asignada aún'}
+
+                Saludos,
+                Jenkins Server
+                """
+        }
+    }
+}
